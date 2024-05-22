@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using CourseLibrary.API.Entities;
+using CourseLibrary.API.Helpers;
 using CourseLibrary.API.Models;
 using CourseLibrary.API.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -8,7 +9,7 @@ namespace CourseLibrary.API.Controllers
 {
     [ApiController]
     [Route("api/authorcollections")]
-    public class AuthorCollectionsController: ControllerBase
+    public class AuthorCollectionsController : ControllerBase
     {
         private readonly ICourseLibraryRepository courseLibraryRepository;
         private readonly IMapper mapper;
@@ -21,11 +22,21 @@ namespace CourseLibrary.API.Controllers
             this.mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
         }
 
-        [HttpGet("{}authorIds")]
+        [HttpGet("({authorIds})", Name = "GetAuthorCollection")]
         public async Task<ActionResult<IEnumerable<AuthorForCreationDto>>> GetAuthorCollection(
+            [ModelBinder(BinderType = typeof(ArrayModelBinder))]
             [FromRoute] IEnumerable<Guid> authorIds)
         {
+            var authorEntities = await courseLibraryRepository.GetAuthorsAsync(authorIds);
 
+            // do we have all requested authors?
+            if (authorIds.Count() != authorEntities.Count())
+            {
+                return NotFound();
+            }
+
+            var authorsToReturn = mapper.Map<IEnumerable<AuthorDto>>(authorEntities);
+            return Ok(authorsToReturn);
         }
 
         [HttpPost]
@@ -40,7 +51,10 @@ namespace CourseLibrary.API.Controllers
 
             await courseLibraryRepository.SaveAsync();
 
-            return Ok();
+            var authorCollectionToReturn = mapper.Map<IEnumerable<AuthorDto>>(authorEntities);
+            var authorIdsAsString = string.Join(",", authorCollectionToReturn.Select(x => x.Id));
+
+            return CreatedAtRoute("GetAuthorCollection", new { authorIds = authorIdsAsString }, authorCollectionToReturn);
         }
     }
 }

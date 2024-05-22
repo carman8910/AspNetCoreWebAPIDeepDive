@@ -1,4 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc.ModelBinding;
+using System.ComponentModel;
+using System.Reflection;
 
 namespace CourseLibrary.API.Helpers
 {
@@ -16,8 +18,27 @@ namespace CourseLibrary.API.Helpers
             // Get the inputted value through the value provider
             var value = bindingContext.ValueProvider.GetValue(bindingContext.ModelName).ToString();
 
-            // if that value is null or white
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                bindingContext.Result = ModelBindingResult.Success(null);
+                return Task.CompletedTask;
+            }
 
+            var elementType = bindingContext.ModelType.GetTypeInfo().GenericTypeArguments[0];
+            var converter = TypeDescriptor.GetConverter(elementType);
+
+            var values = value
+                .Split(new[] { ","}, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x=>converter.ConvertFromString(x.Trim()))
+                .ToArray();
+
+            var typedValues = Array.CreateInstance(elementType, values.Length);
+            values.CopyTo(typedValues, 0);
+            bindingContext.Model = typedValues;
+
+            bindingContext.Result = ModelBindingResult.Success(bindingContext.Model);
+
+            return Task.CompletedTask;  
         }
     }
 }

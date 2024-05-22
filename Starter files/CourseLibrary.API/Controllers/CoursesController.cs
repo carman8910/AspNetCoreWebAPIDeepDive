@@ -2,7 +2,11 @@
 using AutoMapper;
 using CourseLibrary.API.Models;
 using CourseLibrary.API.Services;
+using Microsoft.AspNetCore.JsonPatch;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.Extensions.Options;
 
 namespace CourseLibrary.API.Controllers;
 
@@ -22,7 +26,7 @@ public class CoursesController : ControllerBase
             throw new ArgumentNullException(nameof(mapper));
     }
 
-    [HttpGet]
+    [HttpGet(Name = "GetCoursesForAuthor")]
     public async Task<ActionResult<IEnumerable<CourseDto>>> GetCoursesForAuthor(Guid authorId)
     {
         if (!await _courseLibraryRepository.AuthorExistsAsync(authorId))
@@ -52,7 +56,7 @@ public class CoursesController : ControllerBase
     }
 
 
-    [HttpPost]
+    [HttpPost(Name = "CreateCourseForAuthor")]
     public async Task<ActionResult<CourseDto>> CreateCourseForAuthor(
             Guid authorId, CourseForCreationDto course)
     {
@@ -77,7 +81,7 @@ public class CoursesController : ControllerBase
     [HttpPut("{courseId}")]
     public async Task<IActionResult> UpdateCourseForAuthor(Guid authorId,
       Guid courseId,
-      CourseDto course)
+      CourseForUpdateDto course)
     {
         if (!await _courseLibraryRepository.AuthorExistsAsync(authorId))
         {
@@ -88,7 +92,16 @@ public class CoursesController : ControllerBase
 
         if (courseForAuthorFromRepo == null)
         {
-            return NotFound();
+            var courseToAdd = _mapper.Map<Entities.Course>(course);
+            courseToAdd.Id = courseId;
+
+            _courseLibraryRepository.AddCourse(authorId, courseToAdd);
+            await _courseLibraryRepository.SaveAsync();
+
+            var courseToReturn = _mapper.Map<CourseDto>(courseToAdd);
+            return CreatedAtRoute("GetCourseForAuthor",
+                new { authorId, courseId = courseToReturn.Id },
+                courseToReturn);
         }
 
         _mapper.Map(course, courseForAuthorFromRepo);
@@ -96,6 +109,58 @@ public class CoursesController : ControllerBase
         _courseLibraryRepository.UpdateCourse(courseForAuthorFromRepo);
 
         await _courseLibraryRepository.SaveAsync();
+        return NoContent();
+    }
+
+    [HttpPatch("{courseId}")]
+    public async Task<IActionResult> PartiallyUpdateCourseForAuthor(
+        Guid authorId,
+        Guid courseId,
+        JsonPatchDocument<CourseForUpdateDto> patchDocument
+        )
+    {
+        if (!await _courseLibraryRepository.AuthorExistsAsync(authorId))
+        {
+            return NotFound();
+        }
+
+        var courseForAuthorFromRepo = await _courseLibraryRepository.GetCourseAsync(authorId, courseId);
+        if (courseForAuthorFromRepo == null)
+        {
+            var courseDto = new CourseForUpdateDto();
+            patchDocument.ApplyTo(courseDto, ModelState);
+
+            if (!TryValidateModel(courseDto))
+            {
+                return ValidationProblem(ModelState);
+            }
+
+            var courseToAdd = _mapper.Map<Entities.Course>(courseDto);
+            courseToAdd.Id = courseId;
+
+            _courseLibraryRepository.AddCourse(authorId, courseToAdd);
+            await _courseLibraryRepository.SaveAsync();
+
+            var courseToReturn = _mapper.Map<CourseDto>(courseToAdd);
+            return CreatedAtRoute("GetCourseForAuthor",
+                new { authorId, courseId = courseToReturn.Id },
+                courseToReturn);
+        }
+
+        var courseToPatch = _mapper.Map<CourseForUpdateDto>(courseForAuthorFromRepo);
+        patchDocument.ApplyTo(courseToPatch, ModelState);
+
+        if(!TryValidateModel(courseToPatch))
+        {
+            return ValidationProblem(ModelState);
+        }
+
+        _mapper.Map(courseToPatch, courseForAuthorFromRepo);
+
+        _courseLibraryRepository.UpdateCourse(courseForAuthorFromRepo);
+
+        await _courseLibraryRepository.SaveAsync();
+
         return NoContent();
     }
 
@@ -118,6 +183,14 @@ public class CoursesController : ControllerBase
         await _courseLibraryRepository.SaveAsync();
 
         return NoContent();
+    }
+
+    public override ActionResult ValidationProblem(
+        [ActionResultObjectValue] ModelStateDictionary modelStateDictionary)
+    { 
+        var options = HttpContext.RequestServices.GetRequiredService<IOptions<ApiBehaviorOptions>>();
+
+        return (ActionResult)options.Value.InvalidModelStateResponseFactory(ControllerContext);
     }
 
 }
